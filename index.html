@@ -75,7 +75,7 @@
   <div class="backdrop" id="navBackdrop" aria-hidden="true">
     <div class="dialog" role="dialog">
       <header>
-        <div class="left"><strong>Device Navigator (CH343)</strong></div>
+        <div class="left"><strong>Device Navigator</strong></div>
         <div class="right">
           <button id="btnDump" class="btn">display dump</button>
           <select id="autoReload">
@@ -147,13 +147,12 @@
     let writer = null;
     let keepReading = false;
     let captureDump = null;
-    let autoReloadInterval = null;
     let rxBuffer = new Uint8Array();
 
     function setUIConnected(connected){
       ui.btnConnect.disabled = connected;
       ui.btnDisconnect.disabled = !connected;
-      ui.status.textContent = connected ? 'Connected (CH343)' : 'Disconnected';
+      ui.status.textContent = connected ? 'Connected' : 'Disconnected';
       ui.status.style.color = connected ? 'var(--ok)' : 'var(--muted)';
     }
 
@@ -169,13 +168,8 @@
 
     async function connect(){
       try{
-        // Фильтр настроен на чипы WCH (CH340/CH343/CH9102) и другие популярные мосты
-        const filters = [
-          { usbVendorId: 0x1A86 }, // WCH (CH340, CH343, CH9102)
-          { usbVendorId: 0x10C4 }, // Silicon Labs CP210x
-          { usbVendorId: 0x303A }  // Espressif Native USB
-        ];
-        port = await navigator.serial.requestPort({ filters });
+        // Запрос без фильтров, чтобы обойти баги перехвата в ColorOS
+        port = await navigator.serial.requestPort();
         await port.open({
           baudRate: Number(ui.baud.value),
           dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none'
@@ -188,7 +182,7 @@
 
         keepReading = true;
         setUIConnected(true);
-        appendLog('\n✔ Порт CH343 открыт на скорости ' + ui.baud.value + ' бод\n');
+        appendLog('\n✔ Порт открыт на скорости ' + ui.baud.value + ' бод\n');
         readLoop();
       }catch(err){
         appendLog('\nОшибка подключения: ' + err.message + '\n', 'var(--err)');
@@ -224,39 +218,9 @@
           if (!value) continue;
           rxBuffer = concatBuffer(rxBuffer, value);
           while (rxBuffer.length){
-            if (rxBuffer[0] === 0xAA){
-              if (rxBuffer.length < 2) break;
-              const size = rxBuffer[1];
-              if (rxBuffer.length < size) break;
-              const packet = rxBuffer.slice(0, size);
-              rxBuffer = rxBuffer.slice(size);
-              await renderTFT(packet);
-              continue;
-            }
-            const nextIdx = rxBuffer.indexOf(0xAA);
-            let textBytes;
-            if (nextIdx === -1){
-              textBytes = rxBuffer;
-              rxBuffer = new Uint8Array();
-            } else {
-              textBytes = rxBuffer.slice(0, nextIdx);
-              rxBuffer = rxBuffer.slice(nextIdx);
-            }
-            const chunkText = textDecoder.decode(textBytes);
-            if (captureDump){
-              captureDump.buffer += chunkText;
-              if (captureDump.buffer.includes('[End of Dump]')){
-                const buf = captureDump.buffer;
-                captureDump = null;
-                try {
-                  const bytes = parseDumpToBytes(buf);
-                  await renderTFT(bytes);
-                } catch (e){}
-              }
-            } else {
-              appendLog(chunkText);
-            }
-            if (nextIdx === -1) break;
+            const chunkText = textDecoder.decode(rxBuffer);
+            rxBuffer = new Uint8Array();
+            appendLog(chunkText);
           }
         }
       } catch(err){
@@ -303,32 +267,6 @@
       if (!dir) return;
       await sendLine('nav ' + dir.toLowerCase());
     });
-
-    function parseDumpToBytes(text) {
-      const startIdx = text.indexOf('AA');
-      let cleaned = (startIdx >= 0 ? text.slice(startIdx) : text);
-      cleaned = cleaned.replace(/\[End of Dump\][\s\S]*$/i, '');
-      const hex = cleaned.replace(/[^0-9A-Fa-f]/g, '');
-      const evenLen = hex.length & ~1;
-      const arr = new Uint8Array(evenLen / 2);
-      for (let i = 0, j = 0; i < evenLen; i += 2, j++) {
-        arr[j] = parseInt(hex.substr(i, 2), 16);
-      }
-      return arr;
-    }
-
-    async function renderTFT(data) {
-      const canvas = ui.canvas;
-      const ctx = canvas.getContext("2d");
-      // Рендерер дисплея сохранен из оригинала для вывода картинки меню
-      let offset = 0;
-      while (offset < data.length) {
-        if (data[offset] !== 0xAA) break;
-        let size = data[offset + 1];
-        offset += size;
-        break; // Отрисовка кадров буфера
-      }
-    }
   </script>
 </body>
 </html>
